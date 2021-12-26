@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+trap 'kill $(jobs -p); docker kill flask-server-test;' EXIT
+
+function try {
+  MAX_TRIES=$1
+  N=1
+  DELAY=$2
+  until eval $3
+  do
+    if [[ $N -gt $MAX_TRIES ]]
+    then
+      echo "$(tput setaf 1)$(tput setab 7) ERROR: Tries exceeded for $3 $(tput sgr 0)"
+      exit 1;
+    fi
+    N=$(($N + 1))
+    sleep $DELAY
+  done
+}
+
+# Start database container
+docker run --rm --name flask-server-test -e MYSQL_ROOT_PASSWORD=raspberry -d mysql:latest
+DB_IP="$(./scripts/db-ip)"
+sleep 10
+try 4 5 'docker run -it --rm mysql mysql -h'"$DB_IP"' -uroot -praspberry -e "select 1"'
+
+# Initialize DB
+docker run -it --rm mysql mysql -h$DB_IP -uroot -praspberry -e "create database flasktest"
+
+
+source .venv/bin/activate
+python scripts/create-admin.py strawberry strawberry
+python app.py &
+sleep 2
+
+# Wait for the app to respond
+try 4 5 'curl --header "Content-Type: application/json" --header "Authorization: JWT $JWT_TOKEN" --request GET http://127.0.0.1:5000/version | grep "\"app\": \"Flask Base\""'
+
+TOKENS="$(curl --header "Content-Type: application/json" --request POST --data '{"username":"strawberry","password":"strawberry","client":1}' http://127.0.0.1:5000/login)"
+ACCESS_TOKEN="$(echo "$TOKENS" | grep accessToken | sed -r 's/.*"accessToken": "(.*)".*/\1/')"
+
+curl --header "Content-Type: application/json" \
+     --header "Authorization: Bearer $ACCESS_TOKEN" \
+     --request GET http://127.0.0.1:5000/user -s | python test/user.py
+
+curl --header "Content-Type: application/json" \
+     --header "Authorization: Bearer $ACCESS_TOKEN" \
+     --data '{"message":"Blueberry!"}' \
+     --request POST http://127.0.0.1:5000/example -s | python test/new-example.py

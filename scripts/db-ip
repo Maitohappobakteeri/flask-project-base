@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+docker inspect flask-server-test | grep '"IPAddress":' | head -n1 | sed -r 's/.*"IPAddress": "(.*)".*/\1/'
